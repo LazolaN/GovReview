@@ -3,6 +3,7 @@ import { z } from "zod";
 import { buildAgentMessages } from "@/lib/agents/orchestrator";
 import { streamClaude } from "@/lib/anthropic";
 import { chunkDocument, createChunkPrefix } from "@/lib/documents/chunk";
+import { checkRateLimit } from "@/lib/rate-limit";
 import type { AgentId } from "@/types/agent";
 
 const analyzeSchema = z.object({
@@ -22,6 +23,29 @@ const analyzeSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limiting: 10 analyses per hour per IP
+    const clientIp =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      "unknown";
+    const rateCheck = checkRateLimit(`analyze:${clientIp}`, 10);
+    if (!rateCheck.allowed) {
+      return new Response(
+        JSON.stringify({
+          error: "Rate limit exceeded. Maximum 10 analyses per hour.",
+          resetAt: new Date(rateCheck.resetAt).toISOString(),
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": String(
+              Math.ceil((rateCheck.resetAt - Date.now()) / 1000)
+            ),
+          },
+        }
+      );
+    }
+
     let body;
     try {
       body = await request.json();

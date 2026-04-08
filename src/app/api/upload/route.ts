@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { extractText, getFileType, validateFile } from "@/lib/documents/extract";
 import { classifyDocument } from "@/lib/documents/classify";
+import { isSupabaseConfigured, createServerClient } from "@/lib/supabase";
+import { createReview, createDocument } from "@/lib/db";
 
 export async function POST(request: NextRequest) {
   try {
@@ -37,14 +39,85 @@ export async function POST(request: NextRequest) {
       documentType = await classifyDocument(extractedText, apiKey);
     }
 
-    // In Phase 1, we store in-memory. Phase 2 will persist to Supabase.
     const reviewId = request.headers.get("x-review-id") || crypto.randomUUID();
+    const docId = crypto.randomUUID();
+    const userId = "placeholder-user"; // Until auth is wired
+    let filePath = `memory://${file.name}`;
+
+    // Persist to Supabase if configured
+    if (isSupabaseConfigured()) {
+      // Upload file to Supabase Storage
+      const supabase = createServerClient();
+      const storagePath = `${reviewId}/${docId}-${file.name}`;
+      const { error: storageError } = await supabase.storage
+        .from("documents")
+        .upload(storagePath, buffer, {
+          contentType: file.type || "application/octet-stream",
+          upsert: false,
+        });
+
+      if (storageError) {
+        console.error("Storage upload failed:", storageError.message);
+        // Continue with memory path; the review still works without storage
+      } else {
+        filePath = storagePath;
+      }
+
+      // Create review record (upsert-like: only if this is the first doc for this review)
+      const existingHeader = request.headers.get("x-review-id");
+      if (!existingHeader) {
+        await createReview({
+          id: reviewId,
+          user_id: userId,
+          title: file.name.replace(/\.[^.]+$/, ""),
+          document_type: documentType,
+          status: "uploaded",
+        });
+      }
+
+      // Create document record
+      await createDocument({
+        id: docId,
+        review_id: reviewId,
+        filename: file.name,
+        file_path: filePath,
+        file_size: file.size,
+        file_type: fileType,
+        extracted_text: extractedText,
+        char_count: extractedText.length,
+        document_type: documentType,
+      });
+    } else {
+      // In-memory fallback: still create records via db layer
+      const existingHeader = request.headers.get("x-review-id");
+      if (!existingHeader) {
+        await createReview({
+          id: reviewId,
+          user_id: userId,
+          title: file.name.replace(/\.[^.]+$/, ""),
+          document_type: documentType,
+          status: "uploaded",
+        });
+      }
+
+      await createDocument({
+        id: docId,
+        review_id: reviewId,
+        filename: file.name,
+        file_path: filePath,
+        file_size: file.size,
+        file_type: fileType,
+        extracted_text: extractedText,
+        char_count: extractedText.length,
+        document_type: documentType,
+      });
+    }
 
     const document = {
-      id: crypto.randomUUID(),
+      id: docId,
       reviewId,
       filename: file.name,
-      filePath: `memory://${file.name}`, // Phase 2: Supabase storage path
+      filePath,
       fileSize: file.size,
       fileType,
       extractedText,

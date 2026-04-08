@@ -76,18 +76,89 @@
 - [ ] Authentication middleware (Phase 2 dependency)
 - [ ] Add rehype-sanitize to ReactMarkdown (defense in depth)
 
-### Phase 2 (Planned)
+### Phase 2: Persistence and Library -- In Progress
 
-- Supabase integration (auth, storage, database)
-- Review history persistence
-- Streaming agent responses (server-sent events improvements)
-- Maturity radar chart animation enhancements
-- Gap matrix heat map component
+**Completed -- 08 Apr 2026**
 
-### Phase 3 (Planned)
+**Database Access Layer** (`src/lib/db.ts`)
+- CRUD functions for reviews, documents, agent_results, and reports
+- Dual-mode: Supabase persistence when configured, in-memory Map fallback for local dev
+- Functions: createReview, getReview, getReviewsByUser, updateReviewStatus, createDocument, getDocumentsByReview, createAgentResult, getAgentResultsByReview, createReport, getReportsByReview
 
-- DOCX report builder
-- PDF export
+**Database Types Update** (`src/types/database.ts`)
+- Added `Relationships` field to all table types for Supabase v2.102 compatibility
+- Added `Views` and `Functions` fields to schema type
+
+**Upload Persistence** (`src/app/api/upload/route.ts`)
+- Creates review and document records in DB on upload
+- Uploads files to Supabase Storage `documents` bucket when configured
+- Falls back to in-memory storage for local development
+
+**Reviews API**
+- `GET /api/reviews` -- lists reviews for a user, includes document count and agent completion stats
+- `GET /api/reviews/[id]` -- returns full review with documents and agent results
+
+**Library Page** (`src/app/library/page.tsx`)
+- Fetches reviews from /api/reviews
+- Filter tabs: All, AI Governance, Data Governance, IT Governance
+- Review cards with title, document type badge, status badge, document count, agent progress bar, date
+- Empty state and loading state
+- Each card links to /review/[id]
+
+**Review Detail Page** (`src/app/review/[id]/page.tsx`)
+- Fetches saved review data from /api/reviews/[id]
+- Read-only agent cards with expandable output, maturity scores, duration
+- Maturity radar chart in sidebar
+- Review summary panel (type, documents, agents, date)
+- "Generate Report" button linking to /reports/[reviewId]
+- Error and loading states with back-to-library navigation
+
+### Phase 2 (Remaining)
+
+- Authentication with NextAuth.js (in progress)
+- Gap matrix heat map integration on review detail page
+- Replace placeholder user_id with authenticated user
+
+### Phase 3: Report Export -- In Progress
+
+**Completed -- 08 Apr 2026**
+
+**Gap Matrix Heat Map** (`src/components/review/gap-matrix.tsx`)
+- Interactive heat map showing standards alignment across 6 frameworks x 6 governance domains
+- Colour-coded cells by gap severity: success (80-100%), amber (60-79%), blue (40-59%), red (0-39%)
+- Staggered fade-in animation on mount
+- Hover tooltips with score detail
+- Optional `onCellClick` callback for drill-down
+- Placeholder state when no data is available
+
+**DOCX Report Builder** (`src/lib/reports/docx-builder.ts`)
+- Full report generation using `docx` npm package
+- Cover page with title, client name, date, confidentiality notice, Ubuntu Data Solutions branding
+- Table of Contents placeholder
+- Executive Summary, Current State Assessment, Maturity Assessment table, Gap Analysis, Standards Alignment, Remediation Roadmap, RACI Matrix, and Appendices sections
+- Markdown-to-DOCX converter handling headings, bold, bullets, and numbered lists
+- Maturity scores rendered as a styled table
+- Configurable section selection via `ReportOptions`
+- Uses `extractSection` parser to pull named sections from agent markdown output
+
+**Report Export API** (`src/app/api/export/route.ts`)
+- `POST /api/export` -- generates DOCX reports with Zod-validated input
+- Supports `reviewId`, `format`, `title`, `clientName`, `sections` parameters
+- Fetches agent results from Supabase if configured, falls back to request body
+- Returns binary DOCX with correct Content-Type and Content-Disposition headers
+- PDF format returns 501 placeholder
+
+**Report Builder Page** (`src/app/reports/[id]/page.tsx`)
+- Full report configuration UI with section checkboxes, title/client inputs
+- Format selector (DOCX active, PDF disabled)
+- Agent results status badges
+- Content preview showing excerpts from each completed agent
+- Generate button triggers download via `/api/export`
+- Loading and error states
+
+### Phase 3 (Remaining)
+
+- PDF export implementation
 - Report customisation and branding
 
 ### Phase 4 (Planned)

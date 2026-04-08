@@ -13,30 +13,39 @@ GovReview is an AI-powered ICT governance review platform built for South Africa
 | Styling | Tailwind CSS | 4.2.2 |
 | AI | Anthropic Claude API | claude-sonnet-4-20250514 (agents), claude-haiku-4-5-20251001 (classification) |
 | State | Zustand (global), React hooks (local) | |
+| Database | Supabase (PostgreSQL) or in-memory fallback | |
+| Storage | Supabase Storage or in-memory | |
 | PDF Parsing | pdf-parse | |
 | DOCX Parsing | mammoth.js | |
+| Report Gen | docx (npm package) | |
 | Motion | Framer Motion, CSS animations | |
-| Charts | Recharts (planned), custom SVG radar | |
+| Charts | Custom SVG radar + gap matrix heat map | |
+| Deployment | Railway (Docker) | |
 
 ## Architecture Diagram
 
 ```
 Client (Browser)
   |
-  ├── React UI (Next.js App Router)
-  |     ├── Dashboard (/)
-  |     ├── Review (/review) -- upload + agent analysis
-  |     ├── Library (/library) -- review history
-  |     └── Reports (/reports) -- generated reports
+  +-- React UI (Next.js App Router)
+  |     +-- Dashboard (/)
+  |     +-- Review (/review) -- upload + agent analysis
+  |     +-- Review Detail (/review/[id]) -- saved results
+  |     +-- Library (/library) -- review history with filters
+  |     +-- Report Builder (/reports/[id]) -- configure + export
   |
-  ├── Zustand Store (review-store.ts)
-  |     └── Review state, agent status, streams
+  +-- Zustand Store (review-store.ts)
+  |     +-- Review state, agent status, streams
   |
-  └── API Routes (server-side)
-        ├── POST /api/upload -- file upload + text extraction + classification
-        └── POST /api/analyze -- Claude API proxy with streaming SSE
+  +-- API Routes (server-side)
+        +-- POST /api/upload -- file upload + extraction + classification + persistence
+        +-- POST /api/analyze -- Claude API proxy with streaming SSE + rate limiting
+        +-- GET  /api/reviews -- list reviews with stats
+        +-- GET  /api/reviews/[id] -- full review with results
+        +-- POST /api/export -- DOCX/PDF report generation
               |
-              └── Anthropic Claude API (claude-sonnet-4-20250514)
+              +-- Anthropic Claude API
+              +-- Supabase (PostgreSQL + Storage)
 ```
 
 ## Agent Pipeline
@@ -46,7 +55,7 @@ Agents execute sequentially. Each downstream agent receives upstream results as 
 ```
 1. Lead Consultant (ICT Governance Specialist)
    Standards: COBIT 2019, King IV, ISO 38500, POPIA, FSCA
-   Output: Maturity scores (5 dimensions), strengths, gaps, recommendations
+   Output: Maturity scores (6 dimensions), strengths, gaps, recommendations
       |
       v
 2. Senior Data & AI Analyst
@@ -59,25 +68,42 @@ Agents execute sequentially. Each downstream agent receives upstream results as 
            RACI matrix, ZAR cost estimates, risk-of-inaction
 ```
 
-## Document Processing
+## Data Persistence
+
+Dual-mode storage layer (`src/lib/db.ts`):
+- **Supabase mode**: Full PostgreSQL persistence with Supabase Storage for documents
+- **In-memory mode**: Map-based fallback for local development without Supabase
+
+Tables: `reviews`, `documents`, `agent_results`, `reports`
+
+## Report Generation
 
 ```
-Upload (PDF/DOCX/TXT/MD, max 20MB)
-  -> Validate file type and size
-  -> Extract text (pdf-parse / mammoth.js / direct read)
-  -> Auto-classify with Claude Haiku
-  -> Return extracted text + metadata to client
+Agent Outputs (3x markdown)
+  -> Parse structured sections (extractSection)
+  -> Build DOCX using docx npm package:
+     - Cover page (client name, date, confidential)
+     - Table of Contents
+     - Executive Summary, Current State, Gap Analysis
+     - Maturity table, Standards Alignment, Roadmap, RACI
+     - Appendices (full agent outputs)
+  -> Return binary DOCX for download
 ```
 
-Large documents (>80k chars) are chunked with 2k char overlap, split at paragraph or sentence boundaries.
+## Security
 
-## Key Design Decisions
+- Rate limiting: 10 analyses/hour/IP (in-memory sliding window)
+- Security headers: X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy
+- API key never exposed to client (proxied through API routes)
+- Zod validation on all API inputs
+- AbortController for stream cleanup on navigation
 
-1. **Sequential agents** -- downstream agents benefit from upstream context
-2. **SSE streaming** -- real-time text output during agent analysis
-3. **Client-side orchestration** -- orchestrator runs in the browser, calls API routes sequentially
-4. **Dark theme** -- editorial authority aesthetic for C-suite users
-5. **No database yet** -- Phase 1 stores everything in memory; Phase 2 adds Supabase
+## Deployment (Railway)
+
+- Dockerfile with multi-stage build (deps -> build -> runner)
+- Standalone Next.js output mode
+- `railway.json` for Railway platform config
+- Environment variables configured in Railway dashboard
 
 ## Directory Structure
 
@@ -85,8 +111,11 @@ Large documents (>80k chars) are chunked with 2k char overlap, split at paragrap
 src/
   app/           -- Next.js pages and API routes
   components/    -- React components (ui, layout, upload, agents, review, reports)
-  lib/           -- Core logic (agents, documents, anthropic client, utils)
+  lib/           -- Core logic (agents, documents, reports, anthropic, db, utils)
   stores/        -- Zustand state stores
   hooks/         -- Custom React hooks
   types/         -- TypeScript type definitions
+supabase/
+  migrations/    -- SQL schema migrations
+docs/            -- Project documentation
 ```
